@@ -1,62 +1,74 @@
 import psycopg2
-import networkx as nx
+from pymongo import MongoClient
+from decimal import Decimal
+from datetime import date
 
-# Define a função para criar o grafo
-def create_graph(conn):
-    # Cria um cursor para executar consultas SQL
-    cur = conn.cursor()
+# Configurações do banco de dados PostgreSQL
+pg_config = {
+    'dbname': 'dvdrental2',
+    'user': 'postgres',
+    'password': 'th32s7',
+    'host': 'localhost'  # ou o endereço do servidor PostgreSQL
+}
 
-    # Obtém o nome de todas as tabelas do banco de dados e a quantidade de dados em cada tabela
-    cur.execute("SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC")
-    table_info = cur.fetchall()
+# Configurações do MongoDB
+mongo_client = MongoClient('localhost', 27017)
+mongo_db = mongo_client['seu_banco_mongodb_1234']
 
-    # Cria um grafo direcionado vazio usando o NetworkX
-    G = nx.DiGraph()
+# Conexão com o banco de dados PostgreSQL
+pg_connection = psycopg2.connect(**pg_config)
 
-    # Adiciona um nó para cada tabela
-    for relname, n_live_tup in table_info:
-        G.add_node(relname)
-        # print(f"{relname} ({n_live_tup} registros)")
+try:
+    # Buscar tabelas do PostgreSQL
+    pg_cursor = pg_connection.cursor()
+    pg_cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")
+    tables = [table[0] for table in pg_cursor.fetchall()]
 
-    # Adiciona uma aresta para cada relação entre tabelas (chave estrangeira)
-    for table in G.nodes():
-        cur.execute("SELECT tc.table_name, kcu.column_name, ccu.table_name AS foreign_table_name, ccu.column_name AS foreign_column_name \
-                        FROM information_schema.table_constraints AS tc \
-                        JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name \
-                        JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name \
-                        WHERE constraint_type = 'FOREIGN KEY' AND tc.table_name=%s", [table])
-        foreign_keys = cur.fetchall()
-        for foreign_key in foreign_keys:
-            print(foreign_key)
-            G.add_edge(table, foreign_key[2])
+    for table in tables:
+        # Buscar estrutura da tabela
+        pg_cursor.execute(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name='{table}';")
+        columns = {row[0]: row[1] for row in pg_cursor.fetchall()}
 
-    # # Desenha o grafo na tela
-    # nx.draw(G, with_labels=True)
+        # Buscar dados da tabela
+        pg_cursor.execute(f"SELECT * FROM {table};")
+        data = pg_cursor.fetchall()
 
-    # Imprime todas as arestas do grafo
-    # print("Arestas do grafo:")
-    # for edge in G.edges():
-    #     print(edge)
+        # Inserir dados no MongoDB
+        mongo_collection = mongo_db[table]
+        for row in data:
+            document = {}
+            for i, value in enumerate(row):
+                column_name = pg_cursor.description[i].name
+                data_type = columns.get(column_name)
+                pg_cursor.execute(f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}'")
+                fk_info = pg_cursor.fetchone()
+                print(fk_info, value)
+                # exit()
+                if fk_info:
+                    referenced_table = fk_info[0]
+                    referenced_column = fk_info[1]
+                    pg_cursor.execute(f"SELECT * FROM {referenced_table} where {referenced_column}= {value};")
+                    referenced_row = pg_cursor.fetchone()
+                    print(referenced_row)
+                # Converter decimal.Decimal para float ou str
+                if isinstance(value, Decimal):
+                    document[column_name] = float(value)
+                    # Converter datetime.date para string no formato ISO 8601
+                elif isinstance(value, date):
+                    document[column_name] = value.isoformat()
+                # Converter memoryview para bytes
+                elif isinstance(value, memoryview):
+                    document[column_name] = bytes(value)
+                else:
+                    document[column_name] = {
+                        "value": value,
+                        "data_type": data_type
+                    }
+            mongo_collection.insert_one(document)
 
-    # EDGE(0) -> Tabela origem, EDGE(1) -> Tabela destino
-    # Para cada EDGE(0) exitem Ns EDGE(1)
-    # Ex: Select * from EDGE(0)
-    #     Left Join EDGE(1) on ...
-    #
-
-    # Fecha o cursor e a conexão com o banco de dados
-    cur.close()
-    conn.close()
-
-# Define as informações da conexão com o banco de dados
-conn = psycopg2.connect(
-    host="localhost",
-    database="dvdrental2",
-    user="postgres",
-    password="th32s7"
-)
-# rodar
-#mongo-connector -c config.json
-
-# Cria o grafo
-create_graph(conn)
+except Exception as e:
+    print("Erro:", e)
+finally:
+    pg_cursor.close()
+    pg_connection.close()
+    mongo_client.close()
