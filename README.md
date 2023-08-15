@@ -1,5 +1,6 @@
-# tcc
-TCC II
+# Trabalho de conclusão de curso
 
+## Instruções de uso:
 
-O arquivo upload.html deve estar dentro da pasta templates
+No arquivo config.py ajuste a configuração do seu banco de dados postgreSQL e MongoDB. 
+Rode o arquivo main.py
