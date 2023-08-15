@@ -14,12 +14,15 @@ mongo_db = mongo_client[MONGO_CONFIG['dbname']]
 pg_connection = psycopg2.connect(**PG_CONFIG)
 
 try:
+    tabelas_verificadas = list()
     # Buscar tabelas do PostgreSQL
     pg_cursor = pg_connection.cursor()
-    pg_cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public' and table_name='customer';")
+    pg_cursor.execute("SELECT t.table_name, COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name WHERE t.table_schema = 'public' AND constraint_type = 'FOREIGN KEY' GROUP BY t.table_name ORDER BY num_foreign_keys DESC;")
     tables = [table[0] for table in pg_cursor.fetchall()]
 
     for table in tables:
+        if table in tabelas_verificadas:
+            continue
         # Buscar estrutura da tabela
         pg_cursor.execute(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name='{table}';")
         columns = {row[0]: row[1] for row in pg_cursor.fetchall()}
@@ -51,13 +54,18 @@ try:
                     foreign_object_id = value
                     pg_cursor3 = pg_connection.cursor()
                     pg_cursor3.execute(f"SELECT * FROM {referenced_table} WHERE {referenced_column} = {value};")
+                    column_names = [desc[0] for desc in pg_cursor3.description]
+
                     foreign_object = pg_cursor3.fetchone()
                     if foreign_object:
-                        foreign_object_list = list(foreign_object)
-                        for key, valor in enumerate(foreign_object_list):
+                        result_dict = {col_name: col_value for col_name, col_value in zip(column_names, foreign_object)}
+                        for key, valor in result_dict.items():
                             if convert_value(valor):
-                                foreign_object_list[key] = convert_value(valor)
-                        document[column_name] = tuple(foreign_object_list)
+                                result_dict[key] = convert_value(valor)
+                        document[column_name] = result_dict
+                        if referenced_table not in tabelas_verificadas:
+                            tabelas_verificadas.append(referenced_table)
+                            print(tabelas_verificadas)
                     else:
                         document[column_name] = value
                 else:
