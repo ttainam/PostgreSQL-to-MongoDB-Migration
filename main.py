@@ -3,8 +3,8 @@ from pymongo import MongoClient
 from decimal import Decimal
 from datetime import date
 import traceback
-from config import PG_CONFIG, MONGO_CONFIG
-from utils import convert_value
+from config import PG_CONFIG, MONGO_CONFIG, QTDE_MIN_FOREIGN_KEY_AGREGACAO
+from utils import convert_value, update_collection
 
 # Conexão com o banco de dados MongoDB
 mongo_client = MongoClient(MONGO_CONFIG['host'], MONGO_CONFIG['port'])
@@ -15,6 +15,7 @@ pg_connection = psycopg2.connect(**PG_CONFIG)
 
 try:
     tabelas_verificadas = list()
+    tabelas_verificar_mongo = list()
     # Buscar tabelas do PostgreSQL
     pg_cursor = pg_connection.cursor()
     pg_cursor.execute("SELECT t.table_name, COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name WHERE t.table_schema = 'public' AND constraint_type = 'FOREIGN KEY' GROUP BY t.table_name ORDER BY num_foreign_keys DESC;")
@@ -42,7 +43,11 @@ try:
                 pg_cursor2.execute(f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}'")
                 fk_info = pg_cursor2.fetchone()
 
-                if fk_info and fk_info[0] != table:
+                pg_cursor4 = pg_connection.cursor()
+                pg_cursor4.execute(
+                    f"SELECT COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name WHERE t.table_schema = 'public' AND constraint_type = 'FOREIGN KEY' AND t.table_name = '{table}' GROUP BY t.table_name")
+                num_foreign_keys = pg_cursor4.fetchone()[0]
+                if fk_info and fk_info[0] != table and num_foreign_keys >= QTDE_MIN_FOREIGN_KEY_AGREGACAO:
                     referenced_table = fk_info[0]
                     referenced_column = fk_info[1]
 
@@ -68,6 +73,8 @@ try:
                             print(tabelas_verificadas)
                     else:
                         document[column_name] = value
+                elif fk_info and fk_info[0] != table and num_foreign_keys < QTDE_MIN_FOREIGN_KEY_AGREGACAO:
+                    tabelas_verificar_mongo.append(table)
                 else:
                     if convert_value(value):
                         document[column_name] = convert_value(value)
@@ -76,6 +83,25 @@ try:
 
             mongo_collection.insert_one(document)
             # print(document)
+
+    for table in tabelas_verificar_mongo:
+        # Buscar estrutura da tabela
+        pg_cursor6 = pg_connection.cursor()
+        pg_cursor6.execute(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name='{table}';")
+        columns = {row[0]: row[1] for row in pg_cursor6.fetchall()}
+
+        pg_cursor7 = pg_connection.cursor()
+        pg_cursor7.execute(f"SELECT * FROM {table};")
+        data = pg_cursor7.fetchall()
+
+        for i, value in enumerate(row):
+            column_name = pg_cursor.description[i].name
+            pg_cursor5 = pg_connection.cursor()
+            pg_cursor5.execute(
+                f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}'")
+            fk_info = pg_cursor5.fetchone()
+            if fk_info:
+                update_collection(mongo_db.table, {column_name: value}, {"_id": mongo_db.table.findOne({column_name: value})._id})
 
 except Exception as e:
     print("Erro:", e)
@@ -87,5 +113,6 @@ finally:
     pg_cursor.close()
     pg_cursor2.close()
     pg_cursor3.close()
+    pg_cursor4.close()
     pg_connection.close()
     mongo_client.close()
