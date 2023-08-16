@@ -1,4 +1,5 @@
 import psycopg2
+from bson import BSON
 from pymongo import MongoClient
 from decimal import Decimal
 from datetime import date
@@ -70,11 +71,12 @@ try:
                         document[column_name] = result_dict
                         if referenced_table not in tabelas_verificadas:
                             tabelas_verificadas.append(referenced_table)
-                            print(tabelas_verificadas)
                     else:
                         document[column_name] = value
                 elif fk_info and fk_info[0] != table and num_foreign_keys < QTDE_MIN_FOREIGN_KEY_AGREGACAO:
-                    tabelas_verificar_mongo.append(table)
+                    document[column_name] = BSON.encode({column_name: value})
+                    if table not in tabelas_verificar_mongo:
+                        tabelas_verificar_mongo.append(table)
                 else:
                     if convert_value(value):
                         document[column_name] = convert_value(value)
@@ -93,15 +95,20 @@ try:
         pg_cursor7 = pg_connection.cursor()
         pg_cursor7.execute(f"SELECT * FROM {table};")
         data = pg_cursor7.fetchall()
+        for row in data:
 
-        for i, value in enumerate(row):
-            column_name = pg_cursor.description[i].name
-            pg_cursor5 = pg_connection.cursor()
-            pg_cursor5.execute(
-                f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}'")
-            fk_info = pg_cursor5.fetchone()
-            if fk_info:
-                update_collection(mongo_db.table, {column_name: value}, {"_id": mongo_db.table.findOne({column_name: value})._id})
+            for i, value in enumerate(row):
+                column_name = pg_cursor.description[i].name
+                pg_cursor5 = pg_connection.cursor()
+                pg_cursor5.execute(
+                    f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}'")
+                fk_info = pg_cursor5.fetchone()
+                if fk_info and fk_info[0] != table:
+                    referenced_collection = mongo_db[fk_info[0]]
+                    matching_document = referenced_collection.find_one({fk_info[1]: value})
+
+                    if matching_document:
+                        mongo_db[table].update_one(matching_document,  {"$set": {fk_info[1]: BSON.encode({fk_info[1]:matching_document['_id']})}})
 
 except Exception as e:
     print("Erro:", e)
