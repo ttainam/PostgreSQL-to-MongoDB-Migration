@@ -1,9 +1,9 @@
 
 # Configurações do PostgreSQL
 PG_CONFIG = {
-    'dbname': 'dvdrental',
+    'dbname': 'dvdrental2',
     'user': 'postgres',
-    'password': 'th32s71409',
+    'password': 'th32s7',
     'host': 'localhost'
 }
 
@@ -13,3 +13,5 @@ MONGO_CONFIG = {
     'port': 27017,
     'dbname': 'mydatabase'
 }
+
+QTDE_MIN_FOREIGN_KEY_AGREGACAO = 3
