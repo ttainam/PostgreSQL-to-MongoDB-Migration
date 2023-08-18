@@ -1,5 +1,6 @@
 import psycopg2
 from bson import BSON
+from bson.objectid import ObjectId
 from pymongo import MongoClient
 from decimal import Decimal
 from datetime import date
@@ -108,7 +109,7 @@ try:
                     matching_document = referenced_collection.find_one({fk_info[1]: value})
 
                     if matching_document:
-                        mongo_db[table].update_one(matching_document,  {"$set": {fk_info[1]: BSON.encode({fk_info[1]:matching_document['_id']})}})
+                        mongo_db[table].update_one(matching_document,  {"$set": {fk_info[1]: ObjectId(matching_document['_id'])}})
 
 except Exception as e:
     print("Erro:", e)
