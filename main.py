@@ -20,8 +20,12 @@ try:
     tabelas_verificar_mongo = list()
     # Buscar tabelas do PostgreSQL
     pg_cursor = pg_connection.cursor()
-    pg_cursor.execute("SELECT t.table_name, COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name WHERE t.table_schema = 'public' AND constraint_type = 'FOREIGN KEY' GROUP BY t.table_name ORDER BY num_foreign_keys DESC;")
-    tables = [table[0] for table in pg_cursor.fetchall()]
+    pg_cursor.execute("SELECT t.table_name, COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name AND constraint_type = 'FOREIGN KEY' WHERE t.table_schema = 'public' and t.table_type = 'BASE TABLE'  GROUP BY t.table_name ORDER BY num_foreign_keys DESC;")
+    resultados = pg_cursor.fetchall()
+
+    tables = [table[0] for table in resultados]
+    # Quantidade de foreign keys que a tabela atual possui
+    num_foreign_keys = [table[1] for table in resultados]
 
     for table in tables:
         if table in tabelas_verificadas:
@@ -34,6 +38,11 @@ try:
         pg_cursor.execute(f"SELECT * FROM {table};")
         data = pg_cursor.fetchall()
 
+        pg_cursor4 = pg_connection.cursor()
+        pg_cursor4.execute(
+            f"SELECT tc.table_name AS referenced_table, cu.table_name AS referencing_table, cu.constraint_name AS foreign_key_name FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{table}'")
+        num_references_keys = pg_cursor4.fetchone()[0]
+
         # Inserir dados no MongoDB
         mongo_collection = mongo_db[table]
         for row in data:
@@ -45,11 +54,7 @@ try:
                 pg_cursor2.execute(f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}'")
                 fk_info = pg_cursor2.fetchone()
 
-                pg_cursor4 = pg_connection.cursor()
-                pg_cursor4.execute(
-                    f"SELECT COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name WHERE t.table_schema = 'public' AND constraint_type = 'FOREIGN KEY' AND t.table_name = '{table}' GROUP BY t.table_name")
-                num_foreign_keys = pg_cursor4.fetchone()[0]
-                if fk_info and fk_info[0] != table and num_foreign_keys >= QTDE_MIN_FOREIGN_KEY_AGREGACAO:
+                if fk_info and fk_info[0] != table and num_foreign_keys == 1 and num_references_keys == 0:
                     referenced_table = fk_info[0]
                     referenced_column = fk_info[1]
 
@@ -72,10 +77,11 @@ try:
                         document[column_name] = result_dict
                         if referenced_table not in tabelas_verificadas:
                             tabelas_verificadas.append(referenced_table)
+                            print(tabelas_verificadas)
                     else:
                         document[column_name] = value
-                elif fk_info and fk_info[0] != table and num_foreign_keys < QTDE_MIN_FOREIGN_KEY_AGREGACAO:
-                    document[column_name] = BSON.encode({column_name: value})
+                elif fk_info and fk_info[0] != table:
+                    document[column_name] = value
                     if table not in tabelas_verificar_mongo:
                         tabelas_verificar_mongo.append(table)
                 else:
