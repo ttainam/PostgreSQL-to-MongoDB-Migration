@@ -3,8 +3,8 @@ from bson import BSON
 from bson.objectid import ObjectId
 from pymongo import MongoClient
 import traceback
-from config import PG_CONFIG, MONGO_CONFIG, QTDE_MIN_FOREIGN_KEY_AGREGACAO
-from utils import convert_value, update_collection
+from config import PG_CONFIG, MONGO_CONFIG
+from utils import convert_value, busca_todas_tabelas_postgress, busca_estrutura_tabela, busca_quantidades_referencias, verifica_campo_pk
 
 # Conexão com o banco de dados MongoDB
 mongo_client = MongoClient(MONGO_CONFIG['host'], MONGO_CONFIG['port'])
@@ -16,10 +16,9 @@ pg_connection = psycopg2.connect(**PG_CONFIG)
 try:
     tabelas_verificadas = list()
     tabelas_verificar_mongo = list()
+
     # Buscar tabelas do PostgreSQL
-    pg_cursor = pg_connection.cursor()
-    pg_cursor.execute("SELECT t.table_name, COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name AND constraint_type = 'FOREIGN KEY' WHERE t.table_schema = 'public' and t.table_type = 'BASE TABLE'  GROUP BY t.table_name ORDER BY num_foreign_keys DESC;")
-    resultados = pg_cursor.fetchall()
+    resultados = busca_todas_tabelas_postgress(pg_connection)
 
     table_info = [(table[0], table[1]) for table in resultados]
 
@@ -28,17 +27,15 @@ try:
             continue
 
         # Buscar estrutura da tabela
-        pg_cursor.execute(f"SELECT column_name, data_type FROM information_schema.columns WHERE table_name='{table}';")
-        columns = {row[0]: row[1] for row in pg_cursor.fetchall()}
+        columns = busca_estrutura_tabela(pg_connection, table)
 
         # Buscar dados da tabela
+        pg_cursor = pg_connection.cursor()
         pg_cursor.execute(f"SELECT * FROM {table};")
         data = pg_cursor.fetchall()
 
-        pg_cursor4 = pg_connection.cursor()
-        pg_cursor4.execute(
-            f"SELECT count(tc.table_name) FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{table}'")
-        num_references_keys = pg_cursor4.fetchone()[0]
+        # Quantidade de tabelas que referenciam a tabela atual (Tabela A)
+        num_references_keys = busca_quantidades_referencias(pg_connection, table)
 
         if num_foreign_keys == 0 and num_references_keys == 1:
             continue
@@ -59,20 +56,16 @@ try:
                         document[column_name] = value
 
                 elif num_foreign_keys > 0:
-                    pg_cursor2 = pg_connection.cursor()
-                    pg_cursor2.execute(f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}' AND ccu.table_name !='{table}'")
-                    fk_info = pg_cursor2.fetchone()
+                    fk_info = verifica_campo_pk(pg_connection, table, column_name)
 
                     if fk_info and fk_info[0] != table:
-                        pg_cursor8 = pg_connection.cursor()
-                        pg_cursor8.execute(
-                            f"SELECT COUNT(tc.table_name) FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{fk_info[0]}';")
-                        num_references_keys_tabela_referenciada = pg_cursor8.fetchone()[0]
-
+                        # Quantidade de tabelas que referenciam a tabela referenciada (Tabela B)
+                        num_references_keys_tabela_referenciada = busca_quantidades_referencias(pg_connection, fk_info[0])
                         if num_references_keys_tabela_referenciada == 1:
                             pg_cursor3 = pg_connection.cursor()
                             pg_cursor3.execute(f"SELECT * FROM {fk_info[0]} WHERE {fk_info[1]} = {value};")
                             foreign_object = pg_cursor3.fetchone()
+
                             column_names = [desc[0] for desc in pg_cursor3.description]
                             if foreign_object:
                                 result_dict = {col_name: col_value for col_name, col_value in zip(column_names, foreign_object)}
@@ -81,16 +74,12 @@ try:
                                 col_value_subtable = ''
                                 for j, col_value in enumerate(foreign_object):
                                     col_name = column_names[j]  # Nome da coluna
-                                    pg_cursor2 = pg_connection.cursor()
-                                    pg_cursor2.execute(
-                                        f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{fk_info[0]}' AND kcu.column_name = '{col_name}' AND ccu.table_name !='{fk_info[0]}'")
-                                    fk_info_subtable = pg_cursor2.fetchone()
+                                    fk_info_subtable = verifica_campo_pk(pg_connection, fk_info[0], col_name)
 
                                     if fk_info_subtable:
-                                        pg_cursor11 = pg_connection.cursor()
-                                        pg_cursor11.execute(
-                                            f"SELECT COUNT(tc.table_name) FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{fk_info_subtable[0]}';")
-                                        num_references_keys_referenced_table = pg_cursor11.fetchone()[0]
+                                        # Verificar se a subtabela (Tabela C) que 
+                                        # está contida em Tabela B somente tem uma referencia
+                                        num_references_keys_referenced_table = busca_quantidades_referencias(pg_connection, fk_info_subtable[0])
 
                                         if num_references_keys_referenced_table == 1:
                                             pg_cursor10 = pg_connection.cursor()
@@ -168,8 +157,5 @@ except Exception as e:
     print(traceback_str)
 finally:
     pg_cursor.close()
-    pg_cursor2.close()
-    # pg_cursor3.close()
-    pg_cursor4.close()
     pg_connection.close()
     mongo_client.close()
