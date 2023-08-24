@@ -13,5 +13,3 @@ MONGO_CONFIG = {
     'port': 27017,
     'dbname': 'mydatabase'
 }
-
-QTDE_MIN_FOREIGN_KEY_AGREGACAO = 3
