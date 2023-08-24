@@ -18,12 +18,12 @@ try:
     tabelas_verificar_mongo = list()
     # Buscar tabelas do PostgreSQL
     pg_cursor = pg_connection.cursor()
-    pg_cursor.execute("SELECT t.table_name, COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name AND constraint_type = 'FOREIGN KEY' WHERE t.table_schema = 'public' and t.table_type = 'BASE TABLE'  GROUP BY t.table_name ORDER BY num_foreign_keys ASC;")
+    pg_cursor.execute("SELECT t.table_name, COUNT(constraint_name) AS num_foreign_keys FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name AND constraint_type = 'FOREIGN KEY' WHERE t.table_schema = 'public' and t.table_type = 'BASE TABLE'  GROUP BY t.table_name ORDER BY num_foreign_keys DESC;")
     resultados = pg_cursor.fetchall()
 
     table_info = [(table[0], table[1]) for table in resultados]
 
-    for table, num_keys in table_info:
+    for table, num_foreign_keys in table_info:
         if table in tabelas_verificadas:
             continue
 
@@ -39,9 +39,8 @@ try:
         pg_cursor4.execute(
             f"SELECT count(tc.table_name) FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{table}'")
         num_references_keys = pg_cursor4.fetchone()[0]
-        print(table, num_keys, num_references_keys)
 
-        if num_keys == 0 and num_references_keys == 1:
+        if num_foreign_keys == 0 and num_references_keys == 1:
             continue
 
         # Inserir dados no MongoDB
@@ -49,43 +48,75 @@ try:
         for row in data:
             document = {}
             for i, value in enumerate(row):
+                # print(table, num_foreign_keys, num_references_keys)
                 column_name = pg_cursor.description[i].name
                 data_type = columns.get(column_name)
 
-                if num_keys == 0:
+                if num_foreign_keys == 0:
                     if convert_value(value):
                         document[column_name] = convert_value(value)
                     else:
                         document[column_name] = value
 
-                elif num_keys > 0:
+                elif num_foreign_keys > 0:
                     pg_cursor2 = pg_connection.cursor()
-                    pg_cursor2.execute(f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}'")
+                    pg_cursor2.execute(f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{column_name}' AND ccu.table_name !='{table}'")
                     fk_info = pg_cursor2.fetchone()
 
-                    if fk_info and fk_info[0] != table and num_references_keys <= 1:
+                    if fk_info and fk_info[0] != table:
                         pg_cursor8 = pg_connection.cursor()
                         pg_cursor8.execute(
-                            f"SELECT COUNT(tc.table_name) FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{fk_info[0]}'")
+                            f"SELECT COUNT(tc.table_name) FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{fk_info[0]}';")
                         num_references_keys_tabela_referenciada = pg_cursor8.fetchone()[0]
-                        referenced_table = fk_info[0]
-                        referenced_column = fk_info[1]
 
                         if num_references_keys_tabela_referenciada == 1:
                             pg_cursor3 = pg_connection.cursor()
-                            pg_cursor3.execute(f"SELECT * FROM {referenced_table} WHERE {referenced_column} = {value};")
-                            column_names = [desc[0] for desc in pg_cursor3.description]
-
+                            pg_cursor3.execute(f"SELECT * FROM {fk_info[0]} WHERE {fk_info[1]} = {value};")
                             foreign_object = pg_cursor3.fetchone()
+                            column_names = [desc[0] for desc in pg_cursor3.description]
                             if foreign_object:
                                 result_dict = {col_name: col_value for col_name, col_value in zip(column_names, foreign_object)}
+                                fk_info_subtable = ''
+                                col_value_name = ''
+                                col_value_subtable = ''
+                                for j, col_value in enumerate(foreign_object):
+                                    col_name = column_names[j]  # Nome da coluna
+                                    pg_cursor2 = pg_connection.cursor()
+                                    pg_cursor2.execute(
+                                        f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{fk_info[0]}' AND kcu.column_name = '{col_name}' AND ccu.table_name !='{fk_info[0]}'")
+                                    fk_info_subtable = pg_cursor2.fetchone()
+
+                                    if fk_info_subtable:
+                                        pg_cursor11 = pg_connection.cursor()
+                                        pg_cursor11.execute(
+                                            f"SELECT COUNT(tc.table_name) FROM information_schema.constraint_column_usage cu JOIN information_schema.table_constraints tc ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'FOREIGN KEY' AND cu.table_name = '{fk_info_subtable[0]}';")
+                                        num_references_keys_referenced_table = pg_cursor11.fetchone()[0]
+
+                                        if num_references_keys_referenced_table == 1:
+                                            pg_cursor10 = pg_connection.cursor()
+                                            pg_cursor10.execute(f"SELECT * FROM {fk_info_subtable[0]} WHERE {fk_info_subtable[1]} = {col_value};")
+                                            values = pg_cursor10.fetchone()
+                                            column_names_referenced = [desc[0] for desc in pg_cursor10.description]
+                                            col_value_subtable = {col_name: col_value for col_name, col_value in zip(column_names_referenced, values)}
+                                            col_value_name = col_name
+                                            if fk_info_subtable[0] not in tabelas_verificadas:
+                                                tabelas_verificadas.append(fk_info_subtable[0])
+                                                print(tabelas_verificadas, fk_info_subtable[0], "abc")
+                                if table not in tabelas_verificadas:
+                                    tabelas_verificadas.append(table)
+                                    print(tabelas_verificadas, table, "def")
+
+                                if fk_info[0] not in tabelas_verificadas:
+                                    tabelas_verificadas.append(fk_info[0])
+                                    print(tabelas_verificadas, table, fk_info[0], "fgh")
+
                                 for key, valor in result_dict.items():
                                     if convert_value(valor):
                                         result_dict[key] = convert_value(valor)
                                 document[column_name] = result_dict
-                                if referenced_table not in tabelas_verificadas:
-                                    tabelas_verificadas.append(referenced_table)
-                                    print(tabelas_verificadas)
+
+                                if col_value_name and col_value_subtable:
+                                    result_dict[col_value_name] = col_value_subtable
                             else:
                                 document[column_name] = value
 
