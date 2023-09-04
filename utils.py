@@ -1,3 +1,4 @@
+import psycopg2
 from decimal import Decimal
 from datetime import date
 
@@ -33,3 +34,12 @@ def verifica_campo_pk(pg_connection, table, collumn):
     pg_cursor.execute(
         f"SELECT ccu.table_name AS referenced_table, ccu.column_name AS referenced_column FROM information_schema.key_column_usage kcu JOIN information_schema.constraint_column_usage ccu ON kcu.constraint_name = ccu.constraint_name WHERE kcu.table_name = '{table}' AND kcu.column_name = '{collumn}' AND ccu.table_name !='{table}'")
     return pg_cursor.fetchone()
+
+def busca_campo_pk(pg_connection, table):
+    try:
+        pg_cursor = pg_connection.cursor()
+        pg_cursor.execute(
+            f"SELECT cu.column_name FROM information_schema.tables t LEFT JOIN information_schema.table_constraints tc ON t.table_name = tc.table_name JOIN information_schema.constraint_column_usage cu ON cu.constraint_name = tc.constraint_name WHERE tc.constraint_type = 'PRIMARY KEY' AND t.table_name = '{table}';")
+        return pg_cursor.fetchone()
+    except psycopg2.Error as e:
+        return False
