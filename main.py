@@ -1,8 +1,9 @@
 import psycopg2
 from bson.objectid import ObjectId
 from pymongo import MongoClient
+import pymongo
 import traceback
-from config import PG_CONFIG, MONGO_CONFIG
+from config import PG_CONFIG, MONGO_CONFIG, INSERT_OBJECT_ID_REFERENCES, INSERT_NULL_FIELDS
 from utils import convert_value, busca_todas_tabelas_postgress, busca_estrutura_tabela, busca_quantidades_referencias, verifica_campo_pk, busca_campo_pk
 
 # Conexão com o banco de dados MongoDB
@@ -43,7 +44,6 @@ try:
         for row in data:
             document = {}
             for i, value in enumerate(row):
-                # print(table, num_foreign_keys, num_references_keys)
                 column_name = pg_cursor.description[i].name
                 data_type = columns.get(column_name)
 
@@ -51,7 +51,8 @@ try:
                     if convert_value(value):
                         document[column_name] = convert_value(value)
                     else:
-                        document[column_name] = value
+                        if (value is None and INSERT_NULL_FIELDS) or value is not None:
+                            document[column_name] = value
 
                 elif num_foreign_keys > 0:
                     fk_info = verifica_campo_pk(pg_connection, table, column_name)
@@ -108,65 +109,70 @@ try:
                                     tabelas_verificadas.append(fk_info[0])
 
                                 for key, valor in result_dict.items():
-                                    if convert_value(valor):
+                                    if convert_value(valor) and ((valor is None and INSERT_NULL_FIELDS) or valor is not None):
                                         result_dict[key] = convert_value(valor)
+                                    elif valor is None and INSERT_NULL_FIELDS is False:
+                                        result_dict.pop(key)
                                 document[column_name] = result_dict
 
                                 if col_value_name and col_value_subtable:
-                                    result_dict[col_value_name] = col_value_subtable
+                                    if (col_value_subtable is None and INSERT_NULL_FIELDS) or col_value_subtable is not None:
+                                        result_dict[col_value_name] = col_value_subtable
                             else:
-                                document[column_name] = value
+                                if (value is None and INSERT_NULL_FIELDS) or value is not None:
+                                    document[column_name] = value
                         else:
                             document[fk_info[0]] = value
                     else:
-                        if convert_value(value):
+                        if convert_value(value) and ((value is None and INSERT_NULL_FIELDS) or value is not None):
                             document[column_name] = convert_value(value)
-                        else:
+                        elif (value is None and INSERT_NULL_FIELDS) or value is not None:
                             document[column_name] = value
             mongo_collection.insert_one(document)
 
-    collection_names = mongo_db.list_collection_names()
+    if INSERT_OBJECT_ID_REFERENCES:
+        collection_names = mongo_db.list_collection_names()
 
-    # Imprimir o conteúdo de todos os documentos em cada coleção
-    for collection_name in collection_names:
-        collection = mongo_db[collection_name]
-        documents = collection.find()
-        for document in documents:
-            for collumn, value in document.items():
-                update_dict = {}
-                if isinstance(value, int):
-                    coluna_pk = busca_campo_pk(pg_connection, collumn)
-                    if coluna_pk is not None:
-                        fk_info = verifica_campo_pk(pg_connection, collection_name, coluna_pk[0])
-                        if fk_info and fk_info[0] != collection_name:
-                            referenced_collection = mongo_db[fk_info[0]]
-                            matching_document = referenced_collection.find_one({fk_info[1]: value})
-                            if matching_document:
-                                mongo_db[collection_name].update_one(document,  {"$set": {collumn: ObjectId(matching_document['_id'])}})
-                if isinstance(value, dict):
-                    for key, val in value.items():
-                        if isinstance(val, int):
-                            coluna_pk = busca_campo_pk(pg_connection, key)
-                            if coluna_pk is not None:
-                                fk_info = verifica_campo_pk(pg_connection, collection_name, coluna_pk[0])
-                                if fk_info and fk_info[0] != collection_name:
-                                    referenced_collection = mongo_db[fk_info[0]]
-                                    matching_document = referenced_collection.find_one({fk_info[1]: val})
-                                    if matching_document:
-                                        update_dict[f"{collumn}.{key}"] = ObjectId(matching_document['_id'])
-                        if isinstance(val, dict) and collumn != key:
-                            for k, v in val.items():
-                                if isinstance(v, int):
-                                    coluna_pk = busca_campo_pk(pg_connection, k)
-                                    if coluna_pk is not None:
-                                        fk_info = verifica_campo_pk(pg_connection, key, coluna_pk[0])
-                                        if fk_info and fk_info[0] != key:
-                                            referenced_collection = mongo_db[fk_info[0]]
-                                            matching_document = referenced_collection.find_one({fk_info[1]: v})
-                                            if matching_document:
-                                                update_dict[f"{collumn}.{key}.{k}"] = ObjectId(matching_document['_id'])
-                if update_dict:
-                    mongo_db[collection_name].update_one({"_id": document["_id"]}, {"$set": update_dict})
+        # Imprimir o conteúdo de todos os documentos em cada coleção
+        for collection_name in collection_names:
+            collection = mongo_db[collection_name]
+            documents = collection.find()
+            for document in documents:
+                for collumn, value in document.items():
+                    update_dict = {}
+                    if isinstance(value, int):
+                        coluna_pk = busca_campo_pk(pg_connection, collumn)
+                        if coluna_pk is not None:
+                            fk_info = verifica_campo_pk(pg_connection, collection_name, coluna_pk[0])
+                            if fk_info and fk_info[0] != collection_name:
+                                referenced_collection = mongo_db[fk_info[0]]
+                                matching_document = referenced_collection.find_one({fk_info[1]: value})
+                                if matching_document:
+                                    mongo_db[collection_name].update_one(document,  {"$set": {collumn: ObjectId(matching_document['_id'])}})
+                    if isinstance(value, dict):
+                        for key, val in value.items():
+                            if isinstance(val, int):
+                                coluna_pk = busca_campo_pk(pg_connection, key)
+                                if coluna_pk is not None:
+                                    fk_info = verifica_campo_pk(pg_connection, collection_name, coluna_pk[0])
+                                    if fk_info and fk_info[0] != collection_name:
+                                        referenced_collection = mongo_db[fk_info[0]]
+                                        matching_document = referenced_collection.find_one({fk_info[1]: val})
+                                        if matching_document:
+                                            update_dict[f"{collumn}.{key}"] = ObjectId(matching_document['_id'])
+                            if isinstance(val, dict) and collumn != key:
+                                for k, v in val.items():
+                                    if isinstance(v, int):
+                                        coluna_pk = busca_campo_pk(pg_connection, k)
+                                        if coluna_pk is not None:
+                                            fk_info = verifica_campo_pk(pg_connection, key, coluna_pk[0])
+                                            if fk_info and fk_info[0] != key:
+                                                referenced_collection = mongo_db[fk_info[0]]
+                                                matching_document = referenced_collection.find_one({fk_info[1]: v})
+                                                if matching_document:
+                                                    update_dict[f"{collumn}.{key}.{k}"] = ObjectId(matching_document['_id'])
+                    if update_dict:
+                        mongo_db[collection_name].update_one({"_id": document["_id"]}, {"$set": update_dict})
 
 except Exception as e:
     print("Erro:", e)
