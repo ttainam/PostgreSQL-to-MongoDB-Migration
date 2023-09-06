@@ -1,9 +1,9 @@
 
 # Configurações do PostgreSQL
 PG_CONFIG = {
-    'dbname': 'dvdrental2',
+    'dbname': 'dvdrental',
     'user': 'postgres',
-    'password': 'th32s7',
+    'password': 'postgres',
     'host': 'localhost'
 }
 
@@ -11,5 +11,12 @@ PG_CONFIG = {
 MONGO_CONFIG = {
     'host': 'localhost',
     'port': 27017,
-    'dbname': 'mydatabase'
+    'dbname': 'teste123'
 }
+
+# Insere o objectId nos campos Foreign Key que ficaram com ID.
+INSERT_OBJECT_ID_REFERENCES = False
+
+# Insere os campos com valores null
+# Por conceito: bancos NoSQL não deveriam inserir valores não significativos.
+INSERT_NULL_FIELDS = False
