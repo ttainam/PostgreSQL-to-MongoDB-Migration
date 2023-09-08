@@ -1,8 +1,10 @@
-# Trabalho de conclusão de curso
+# Completion of course work
 
-## Instruções de uso:
+## Instructions for use:
 
-No arquivo config.py ajuste a configuração do seu banco de dados postgreSQL e MongoDB. 
+In the config.py file adjust the configuration of your postgreSQL and MongoDB database.
 
+Run the main.py file
 
-Rode o arquivo main.py
+## Help?
+See https://github.com/ttainam/tcc/blob/main/docs.md
