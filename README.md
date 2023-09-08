@@ -2,21 +2,21 @@
 
 ## Instructions for use:
 
-### Install pip
+### 1. Install pip
 https://pip.pypa.io/en/stable/installation/
 
-### config.py
+### 2. config.py
 
 In the config.py file adjust the configuration of your postgreSQL and MongoDB database and others preferences.
 
-### install packages
+### 3. install packages
 run the command:
 
 ```pycon
   pip install -r requirements.txt
 ```
 
-### Run
+### 4. Run
 Run the main.py file
 
 run the command:
