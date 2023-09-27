@@ -25,6 +25,12 @@ try:
         if table in tabelas_verificadas:
             continue
 
+        # Quantidade de tabelas que referenciam a tabela atual (Tabela A)
+        num_references_keys = busca_quantidades_referencias(pg_connection, table)
+
+        if num_foreign_keys == 0 and num_references_keys == 1:
+            continue
+        
         # Buscar estrutura da tabela
         columns = busca_estrutura_tabela(pg_connection, table)
 
@@ -33,11 +39,7 @@ try:
         pg_cursor.execute(f"SELECT * FROM {table};")
         data = pg_cursor.fetchall()
 
-        # Quantidade de tabelas que referenciam a tabela atual (Tabela A)
-        num_references_keys = busca_quantidades_referencias(pg_connection, table)
 
-        if num_foreign_keys == 0 and num_references_keys == 1:
-            continue
 
         # Inserir dados no MongoDB
         mongo_collection = mongo_db[table]
