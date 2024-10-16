@@ -1,6 +1,8 @@
-#
+# **NEW VERSION AVAILABLE:**
+https://github.com/ttainam/Rel2Doc-Demo-SBBD
 
-Article: https://sol.sbc.org.br/index.php/erbd/article/view/28489
+# Article: 
+https://sol.sbc.org.br/index.php/erbd/article/view/28489
 
 # Instructions for use:
 
